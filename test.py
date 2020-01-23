@@ -26,6 +26,12 @@ classes = utils.load_classes(class_path)
 # Tensor = torch.cuda.FloatTensor
 Tensor = torch.Tensor
 
+def revert_coord(coord: tuple, base: int =416,
+                  imsize: tuple =(1280, 720)) -> tuple:
+    new_x = coord[0] * imsize[0] // base
+    new_y = coord[1] * imsize[1] // base
+    return (new_x, new_y)
+
 def detect_image(img):
     # scale and pad image
     ratio = min(img_size/img.size[0], img_size/img.size[1])
@@ -92,8 +98,7 @@ def onMouse(event, x, y, flag, params):
 
 
 
-# videopath = 'IMG_4904.MOV'
-videopath = 'videoplayback.mp4'
+videopath = 'seiucchanvideo.mp4'
 
 import cv2
 from IPython.display import clear_output
@@ -106,46 +111,41 @@ ret, frame = vid.read()
 img = frame
 wname = "MouseEvent"
 cv2.namedWindow(wname)
-npoints = 4
+npoints = 5
 ptlist = PointList(npoints)
 cv2.setMouseCallback(wname, onMouse, [wname, img, ptlist])
 cv2.waitKey()
 cv2.destroyAllWindows()
 mot_tracker = Sort()
+count_boxes = []
 
 while(True):
-    for ii in range(40):
+    for ii in range(4000):
         ret, frame = vid.read()
-        cv2.line(img, (ptlist.ptlist[0][0], ptlist.ptlist[0][1]),
-                 (ptlist.ptlist[1][0], ptlist.ptlist[1][1]), (0, 255, 0), 3)
-        cv2.line(img, (ptlist.ptlist[1][0], ptlist.ptlist[1][1]),
-                 (ptlist.ptlist[2][0], ptlist.ptlist[2][1]), (0, 255, 0), 3)
-        cv2.line(img, (ptlist.ptlist[2][0], ptlist.ptlist[2][1]),
-                 (ptlist.ptlist[3][0], ptlist.ptlist[3][1]), (0, 255, 0), 3)
-        cv2.line(img, (ptlist.ptlist[3][0], ptlist.ptlist[3][1]),
-                 (ptlist.ptlist[4][0], ptlist.ptlist[4][1]), (0, 255, 0), 3)
-        cv2.line(img, (ptlist.ptlist[4][0], ptlist.ptlist[4][1]),
-                 (ptlist.ptlist[0][0], ptlist.ptlist[0][1]), (0, 255, 0), 3)
+        print(type(frame))
 
-        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if type(frame) == type(None):
+            break
+
         pilimg = Image.fromarray(frame)
         detections = detect_image(pilimg)
-        x = 0
-        x_list = []
+        out_box_indices = []
         detections = np.array(detections)
-        for corrdinates in detections:
-            # corrdinates = corrdinates.tolist()
-            pt = (int(corrdinates[2]), int(corrdinates[3]))
-            if cv2.pointPolygonTest(ptlist.ptlist, pt, False) >= 0:
-                x_list.append(x)
-            x += 1
-        print("-----")
+        for i, coord in enumerate(detections):
+            # pt = (int(coordinates[2]), int(coordinates[3]))
+            pt = ((coord[0] + coord[2]) // 2, coord[3] - (coord[3] - coord[1]) // 2)
 
-        for i in x_list:
-            print(detections[i])
+            pt = revert_coord(pt)
+
+            result =  cv2.pointPolygonTest(ptlist.ptlist, pt, False)
+            if result < 0:
+                out_box_indices.insert(0, i)
+        # sys.exit(0)
+        for i in out_box_indices:
+            # sys.exit(0)
             detections = np.delete(detections, i, 0)
-        print("-----")
-        print(detections)
+        count_boxes.append(len(detections))
+
         detections = torch.tensor(detections)
 
         img = np.array(pilimg)
@@ -158,7 +158,6 @@ while(True):
             tracked_objects = mot_tracker.update(detections.cpu())
             unique_labels = detections[:, -1].cpu().unique()
             n_cls_preds = len(unique_labels)
-            # for x1, y1, x2, y2, obj_id, cls_pred in tracked_objects:
             for x1, y1, x2, y2, obj_id in tracked_objects:
                 box_h = int(((y2 - y1) / unpad_h) * img.shape[0])
                 box_w = int(((x2 - x1) / unpad_w) * img.shape[1])
@@ -166,20 +165,12 @@ while(True):
                 x1 = int(((x1 - pad_x // 2) / unpad_w) * img.shape[1])
                 color = colors[int(obj_id) % len(colors)]
                 color = [i * 255 for i in color]
-                # cls = classes[int(cls_pred)]
                 cls = classes[int(0)]
                 cv2.rectangle(frame, (x1, y1), (x1+box_w, y1+box_h),
                              color, 4)
-                # cv2.rectangle(frame, (x1, y1-35), (x1+len(cls)*19+60,
-                #              y1), color, -1)
-                # cv2.putText(frame, cls + "-" + str(int(obj_id)),
-                #             (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                #             1, (255,255,255), 3)
         cv2.imshow("mot_tracker", frame)
         key = cv2.waitKey(1) & 0xFF
 
-        # fig=plt.figure(figsize=(12, 8))
-        # plt.title("Video Stream")
-        # plt.imshow(frame)
-        # plt.show()
-        # clear_output(wait=True)
+    break
+
+print('ratio:', np.mean(count_boxes) / 10)
